@@ -25,7 +25,7 @@ const SelectSource: React.FC<SelectSourceProps> = ({ onNext, onApiSelect }) => {
       },
       {
         name: "Custom Source",
-        description: "Stream data in real time by integrating with API",
+        description: "Connect to your API to load the data",
         icon: <FiServer className="text-[#1b5e92] text-2xl" />,
         apiUrl: "streaming",
       },
@@ -37,7 +37,7 @@ const SelectSource: React.FC<SelectSourceProps> = ({ onNext, onApiSelect }) => {
       },
       {
         name: "Realtime API",
-        description: "Connect to your API to load the data",
+        description: "Stream data in real time by integrating with API",
         icon: <AiOutlineApi className="text-[#1b5e92] text-2xl" />,
         apiUrl: "realtime",
       },
