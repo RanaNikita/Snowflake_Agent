@@ -68,4 +68,5 @@ jobs:
           app-name: 'Snowflake-Agent'
           slot-name: 'Production'
           package: .
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_D73F8C1356FC4147845E324D38A852D6 }}
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_1E3D8CF70F0A48419C3EAA64E09804EB }}
+
