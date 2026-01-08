@@ -512,7 +512,554 @@
 //   );
 // }
 
-// 8 jan working but not able to push
+
+
+
+// 8 jan working 
+
+// // @ts-nocheck
+// // components/admin_v2.tsx
+// import { useEffect, useMemo, useState } from "react";
+// import CodeMirror from "@uiw/react-codemirror";
+// import { yaml as yamlLang } from "@codemirror/lang-yaml";
+// import { EditorView } from "@uiw/react-codemirror";
+// import YAML from "js-yaml";
+
+// /** ===== Types ===== */
+// interface RuleRow {
+//   ruleName: string;
+//   enabled: boolean; 
+//   description: string;
+// }
+// type ViewMode = "table" | "yaml";
+
+// /** ===== Props ===== */
+// type AdminProps = {
+//   onClose: () => void;
+//   baseUrl?: string;
+//   warehouse?: string;
+//   token?: string;
+// };
+
+// /** ===== Hardcoded stage per your environment ===== */
+// const HARD_DB = "MY_DB";
+// const HARD_SCHEMA = "PUBLIC";
+// const HARD_STAGE = "AGENT_STAGE";
+
+// /** ===== Utility ===== */
+// const safe = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+
+// /** Safe double-quote Snowflake identifier: A -> "A", handles embedded " as "" */
+// function qIdent(id: string) {
+//   return `"${(id ?? "").replace(/"/g, '""')}"`;
+// }
+
+// /** Strip surrounding single/double quotes from a segment */
+// function stripSurroundingQuotes(s: string): string {
+//   if (!s) return s;
+//   const first = s[0], last = s[s.length - 1];
+//   if ((first === `"` && last === `"`) || (first === `'` && last === `'`)) {
+//     return s.slice(1, -1);
+//   }
+//   return s;
+// }
+
+// /** Robust normalizer to relative path under the stage */
+// function normalizePath(input: string): string {
+//   let p = (input ?? "").trim();
+//   if (p.startsWith("@")) p = p.slice(1);
+
+//   const QDB = qIdent(HARD_DB);
+//   const QSC = qIdent(HARD_SCHEMA);
+//   const QST = qIdent(HARD_STAGE);
+
+//   const quotedStage = `${QDB}.${QSC}.${QST}`;
+//   const unquotedStage = `${HARD_DB}.${HARD_SCHEMA}.${HARD_STAGE}`;
+
+//   // Remove @"DB"."SCHEMA"."STAGE"/ or DB.SCHEMA.STAGE/ prefixes
+//   for (const prefix of [quotedStage, unquotedStage]) {
+//     const withSlash = `${prefix}/`;
+//     if (p.startsWith(withSlash)) {
+//       p = p.slice(withSlash.length);
+//     }
+//   }
+
+//   // Handle forms like STAGE/file.yaml or "STAGE"/"file.yaml"
+//   const seg0 = (p.split("/")[0] || "").replace(/"/g, "");
+//   if (seg0.toUpperCase() === HARD_STAGE.toUpperCase()) {
+//     p = p.split("/").slice(1).join("/");
+//   }
+
+//   // Remove leading slashes and quotes around each segment
+//   while (p.startsWith("/")) p = p.slice(1);
+//   p = p
+//     .split("/")
+//     .filter(Boolean)
+//     .map(stripSurroundingQuotes) // DE-QUOTE segments
+//     .join("/");
+
+//   return p;
+// }
+
+// /** ===== Component ===== */
+// export function AdminConfigEditor(props: AdminProps) {
+//   // ---- Env / Config: props first, then env fallback ----
+//   const BASE_URL = (safe(props.baseUrl) || safe(import.meta.env.VITE_SF_BASE_URL)).replace(/\/+$/, "");
+//   const WAREHOUSE = safe(props.warehouse) || safe(import.meta.env.VITE_SF_WAREHOUSE) || undefined;
+//   const TOKEN = safe(props.token) || safe(import.meta.env.VITE_SF_BEARER_TOKEN);
+
+//   // Quoted identifiers ONLY for stage names (not for path segments)
+//   const QDB = qIdent(HARD_DB);
+//   const QSC = qIdent(HARD_SCHEMA);
+//   const QST = qIdent(HARD_STAGE);
+
+//   // Build Snowflake API details
+//   const STATEMENTS_URL = `${BASE_URL}/api/v2/statements`;
+//   const SF_HEADERS: Record<string, string> = {
+//     Authorization: `Bearer ${TOKEN}`,
+//     "Content-Type": "application/json",
+//     Accept: "application/json",
+//   };
+
+//   /** ===== Helpers ===== */
+//   async function runSql(
+//     statement: string,
+//     timeout: number = 120,
+//     context: { database?: string; schema?: string; warehouse?: string } = {
+//       database: HARD_DB,
+//       schema: HARD_SCHEMA,
+//       warehouse: WAREHOUSE,
+//     }
+//   ): Promise<any[]> {
+//     const payload: Record<string, any> = {
+//       statement,
+//       timeout,
+//       database: context.database,
+//       schema: context.schema,
+//     };
+//     if (context.warehouse) payload.warehouse = context.warehouse;
+//     const resp = await fetch(STATEMENTS_URL, {
+//       method: "POST",
+//       headers: SF_HEADERS,
+//       body: JSON.stringify(payload),
+//       cache: "no-store",
+//     });
+//     if (!resp.ok) {
+//       const msg = await resp.text().catch(() => "");
+//       throw new Error(`SQL POST failed: ${resp.status} ${msg}`);
+//     }
+//     const data = await resp.json();
+//     // Synchronous result
+//     if (data?.data) return data.data;
+//     // Otherwise poll once
+//     const statusUrl: string | undefined = data?.statementStatusUrl;
+//     if (!statusUrl) {
+//       throw new Error(`No data and no statusUrl:\n${JSON.stringify(data, null, 2)}`);
+//     }
+//     const pollResp = await fetch(BASE_URL + statusUrl, { headers: SF_HEADERS, cache: "no-store" });
+//     if (!pollResp.ok) {
+//       const msg = await pollResp.text().catch(() => "");
+//       throw new Error(`SQL GET status failed: ${pollResp.status} ${msg}`);
+//     }
+//     const j = await pollResp.json();
+//     if (!j?.data) throw new Error(`Polled status but no data:\n${JSON.stringify(j, null, 2)}`);
+//     return j.data;
+//   }
+
+//   // Whole-file format used for reading entire file content as $1
+//   async function ensureWholeFileFormat() {
+//     const sql = `
+//       create or replace file format ${QSC}.FF_WHOLEFILE
+//         type = csv
+//         field_delimiter = '\\u0001'
+//         record_delimiter = 'NONE'
+//         skip_header = 0;
+//     `;
+//     await runSql(sql);
+//   }
+
+//   // LIST files from the stage and produce normalized relative paths
+//   // Only show: config_agg.yaml, config_s.yaml, dq_config.yaml (deduplicated)
+//   async function listStageFiles(): Promise<string[]> {
+//     const sql = `LIST @${QDB}.${QSC}.${QST}`;
+//     const rows = await runSql(sql);
+
+//     const allow = new Set(["dq_config.yaml", "config_agg.yaml", "config_s.yaml"]);
+//     const normalized = (rows ?? [])
+//       .map((r: any[]) => r?.[0])                   // full name/path from LIST
+//       .filter(Boolean)
+//       .map((name: string) => normalizePath(name))  // strip stage prefix + quotes
+//       .filter((name: string) => allow.has(name));  // restrict to allowed names
+
+//     // Deduplicate by lowercased name to collapse quoted/unquoted variants
+//     const uniqKeys = new Set<string>();
+//     const finalList: string[] = [];
+//     for (const n of normalized) {
+//       const key = n.toLowerCase();
+//       if (!uniqKeys.has(key)) {
+//         uniqKeys.add(key);
+//         finalList.push(n);
+//       }
+//     }
+//     finalList.sort((a, b) => a.localeCompare(b));
+//     return finalList;
+//   }
+
+//   // ==== STAGE-ONLY READ ====
+//   async function readStageFileText(filename: string): Promise<string> {
+//     const safeName = normalizePath(filename);
+//     if (!safeName) throw new Error(`Resolved empty path from '${filename}' after normalization.`);
+
+//     // IMPORTANT: DO NOT QUOTE path segments; only quote stage identifiers
+//     const stageSql = `
+//       select $1 as content
+//       from @${QDB}.${QSC}.${QST}/${safeName}
+//         (file_format => ${QSC}.FF_WHOLEFILE);
+//     `;
+
+//     const sRows = await runSql(stageSql);
+//     const content = sRows?.[0]?.[0];
+//     if (typeof content === "string") {
+//       return content; // plain text returned by SQL API
+//     }
+//     throw new Error(`No content returned for ${safeName}. Check path and FF_WHOLEFILE.`);
+//   }
+
+//   // ==== STAGE-ONLY WRITE ====
+//   async function writeStageFileText(path: string, content: string) {
+//     const rel = normalizePath(path);           // de-quote segments
+//     const escapedContent = (content ?? "").replace(/'/g, "''");
+
+//     // IMPORTANT: DO NOT QUOTE the path; quoting creates literal quotes in the file name
+//     const sql = `
+//       copy into @${QDB}.${QSC}.${QST}/${rel}
+//       from ( select '${escapedContent}' as content )
+//       file_format = (
+//         type = csv
+//         field_delimiter = '\\u0001'
+//         record_delimiter = 'NONE'
+//         skip_header = 0
+//         compression = none
+//       )
+//       overwrite = true
+//       single = true;
+//     `;
+//     await runSql(sql);
+//   }
+
+//   /** ===== UI state ===== */
+//   const [files, setFiles] = useState<string[]>([]);
+//   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+//   const [viewMode, setViewMode] = useState<ViewMode>("table");
+//   const [fileContent, setFileContent] = useState<string>("");
+//   const [rows, setRows] = useState<RuleRow[]>([]);
+//   const [saving, setSaving] = useState<boolean>(false);
+//   const [loadingFiles, setLoadingFiles] = useState<boolean>(false);
+//   const [loadingDoc, setLoadingDoc] = useState<boolean>(false);
+//   const [error, setError] = useState<string | null>(null);
+//   const [success, setSuccess] = useState<string | null>(null);
+
+//   const dirty = useMemo(() => {
+//     const yamlFromRows = convertRowsToYaml(rows);
+//     return Boolean(selectedFile && yamlFromRows !== fileContent);
+//   }, [rows, fileContent, selectedFile]);
+
+//   useEffect(() => {
+//     (async () => {
+//       setLoadingFiles(true);
+//       setError(null);
+//       try {
+//         await ensureWholeFileFormat();
+//         const items = await listStageFiles();
+//         setFiles(items);
+//       } catch (err: any) {
+//         console.error(err);
+//         setError(err?.message || "Failed to list files.");
+//         setFiles([]);
+//       } finally {
+//         setLoadingFiles(false);
+//       }
+//     })();
+//   }, []);
+
+//   function parseYamlToRows(yamlString: string) {
+//     try {
+//       const parsed: any = YAML.load(yamlString) ?? {};
+//       const dqChecks = parsed?.dq_checks ?? {};
+//       const newRows: RuleRow[] = Object.entries(dqChecks).map(([key, value]: any) => ({
+//         ruleName: key,
+//         enabled: Boolean(value?.enabled),
+//         description: value?.description ?? "",
+//       }));
+//       setRows(newRows);
+//     } catch (err) {
+//       console.error("Invalid YAML:", err);
+//       // keep rows unchanged
+//     }
+//   }
+
+//   function convertRowsToYaml(list: RuleRow[]) {
+//     const dqChecks: Record<string, { enabled: boolean; description: string }> = {};
+//     list.forEach((row) => {
+//       const name = (row.ruleName || "").trim();
+//       if (!name) return;
+//       dqChecks[name] = {
+//         enabled: !!row.enabled,
+//         description: row.description ?? "",
+//       };
+//     });
+//     return YAML.dump({ dq_checks: dqChecks }, { lineWidth: 120 });
+//   }
+
+//   const loadFile = async (filename: string) => {
+//     setLoadingDoc(true);
+//     setError(null);
+//     setSuccess(null);
+//     try {
+//       const normalized = normalizePath(filename);
+//       const content = await readStageFileText(normalized);
+//       setSelectedFile(normalized);
+//       setFileContent(content);
+//       parseYamlToRows(content);
+//       setViewMode("table");
+//       setSuccess(`Loaded: ${normalized}`);
+//     } catch (err: any) {
+//       console.error(err);
+//       setError(err?.message || "Failed to load file.");
+//     } finally {
+//       setLoadingDoc(false);
+//     }
+//   };
+
+//   // SAVE: writes directly to STAGE, then refreshes UI.
+//   const save = async () => {
+//     if (!selectedFile) return;
+//     setSaving(true);
+//     setError(null);
+//     setSuccess(null);
+//     try {
+//       // Basic validation: no duplicate rule names
+//       const names = rows.map((r) => (r.ruleName || "").trim()).filter(Boolean);
+//       const dup = names.find((n, i) => names.indexOf(n) !== i);
+//       if (dup) {
+//         throw new Error(`Duplicate rule name: ${dup}`);
+//       }
+
+//       const path = normalizePath(selectedFile);
+//       const toSave = viewMode === "table" ? convertRowsToYaml(rows) : fileContent;
+
+//       await ensureWholeFileFormat();
+//       await writeStageFileText(path, toSave);
+
+//       // Update local editor state
+//       setFileContent(toSave);
+
+//       // Refresh list and re-read from stage
+//       setLoadingFiles(true);
+//       const items = await listStageFiles();
+//       setFiles(items);
+//       setLoadingFiles(false);
+
+//       setLoadingDoc(true);
+//       const fresh = await readStageFileText(path);
+//       setSelectedFile(path);
+//       setFileContent(fresh);
+//       parseYamlToRows(fresh);
+//       setLoadingDoc(false);
+
+//       // Show unquoted path in banner
+//       setSuccess(`Saved to ${HARD_DB}.${HARD_SCHEMA}.${HARD_STAGE}/${path}`);
+//     } catch (err: any) {
+//       console.error(err);
+//       setError(err?.message || "Failed to save file.");
+//     } finally {
+//       setSaving(false);
+//     }
+//   };
+
+//   const addRow = () =>
+//     setRows((prev) => [
+//       ...prev,
+//       { ruleName: `new_rule_${prev.length + 1}`, enabled: false, description: "" },
+//     ]);
+
+//   const deleteRow = (index: number) =>
+//     setRows((prev) => {
+//       const updated = [...prev];
+//       updated.splice(index, 1);
+//       return updated;
+//     });
+
+//   const updateRow = (index: number, field: keyof RuleRow, value: RuleRow[keyof RuleRow]) =>
+//     setRows((prev) => {
+//       const updated = [...prev];
+//       updated[index] = { ...updated[index], [field]: value };
+//       return updated;
+//     });
+
+//   // ===== Render =====
+//   return (
+//     <div className="fixed inset-0 z-50 bg-white overflow-auto p-4">
+//       <div className="flex items-center justify-between p-2 border-b border-gray-200">
+//         <h2 className="text-2xl font-bold text-gray-800">
+//           {selectedFile ? `Editing: ${selectedFile}` : "Config Editor"}
+//         </h2>
+//         <div className="flex items-center gap-2">
+//           {/* Force Reload removed */}
+//           <button
+//             onClick={() => {
+//               if (viewMode === "table") {
+//                 const updatedYaml = convertRowsToYaml(rows);
+//                 setFileContent(updatedYaml);
+//               }
+//               setViewMode((m) => (m === "yaml" ? "table" : "yaml"));
+//             }}
+//             className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300"
+//           >
+//             {viewMode === "yaml" ? "Table View" : "YAML View"}
+//           </button>
+//           <button
+//             onClick={save}
+//             disabled={!selectedFile || saving}
+//             className={`px-6 py-2 font-semibold rounded-lg text-white ${
+//               saving ? "bg-blue-400" : "bg-blue-600 hover:bg-blue-700"
+//             }`}
+//           >
+//             {saving ? "Saving..." : dirty ? "Save *" : "Save"}
+//           </button>
+//           <button
+//             onClick={() => {
+//               if (dirty && !window.confirm("You have unsaved changes. Close anyway?")) return;
+//               props.onClose();
+//             }}
+//             className="px-6 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600"
+//           >
+//             Close
+//           </button>
+//         </div>
+//       </div>
+
+//       {/* Status banners */}
+//       <div className="mt-2">
+//         {error && <div className="p-2 text-sm text-red-700 bg-red-100 rounded">{error}</div>}
+//         {success && <div className="p-2 text-sm text-green-700 bg-green-100 rounded">{success}</div>}
+//       </div>
+
+//       <div className="flex h-[80vh]">
+//         {/* Sidebar */}
+//         <div className="w-1/4 max-w-xs bg-gray-50 border-r border-gray-200 p-5 overflow-y-auto rounded-md">
+//           <h3 className="font-semibold text-lg text-gray-700 mb-3">Config Files</h3>
+//           {loadingFiles && <div className="text-gray-500 text-sm mb-2">Loading...</div>}
+//           <ul className="space-y-1">
+//             {(files ?? []).map((file) => (
+//               <li key={file.toLowerCase()}>
+//                 <button
+//                   onClick={() => loadFile(file)}
+//                   className={`block w-full text-left p-2 rounded-md transition-colors duration-150 ${
+//                     selectedFile?.toLowerCase() === file.toLowerCase()
+//                       ? "bg-blue-100 text-blue-700 font-medium"
+//                       : "text-gray-600 hover:bg-gray-200"
+//                   }`}
+//                 >
+//                   {file}
+//                 </button>
+//               </li>
+//             ))}
+//           </ul>
+//         </div>
+
+//         {/* Editor panel */}
+//         <div className="w-4/5 p-4 border border-gray-300 rounded overflow-y-auto">
+//           {!selectedFile ? (
+//             <div className="flex items-center justify-center h-full text-gray-500 text-xl">
+//               Select a file from the left to edit.
+//             </div>
+//           ) : loadingDoc ? (
+//             <div className="text-gray-600">Loading document...</div>
+//           ) : viewMode === "yaml" ? (
+//             <CodeMirror
+//               value={fileContent}
+//               onChange={(value) => {
+//                 setFileContent(value ?? "");
+//                 try {
+//                   parseYamlToRows(value ?? "");
+//                 } catch {}
+//               }}
+//               height="70vh"
+//               extensions={[yamlLang(), EditorView.lineWrapping]}
+//               basicSetup={{ lineNumbers: true, highlightActiveLine: true }}
+//               style={{ fontFamily: "monospace", textAlign: "left", width: "100%" }}
+//             />
+//           ) : (
+//             <div>
+//               <table className="min-w-full border border-gray-300">
+//                 <thead>
+//                   <tr className="bg-gray-100">
+//                     <th className="border p-2 text-left">Rule Name</th>
+//                     <th className="border p-2 text-left">Description</th>
+//                     <th className="border p-2 text-left">Enabled</th>
+//                     <th className="border p-2 text-left">Actions</th>
+//                   </tr>
+//                 </thead>
+//                 <tbody>
+//                   {rows.map((row, index) => (
+//                     <tr key={`${row.ruleName}-${index}`}>
+//                       <td className="border p-2">
+//                         <input
+//                           type="text"
+//                           value={row.ruleName}
+//                           onChange={(e) => updateRow(index, "ruleName", e.target.value)}
+//                           className="w-full border rounded px-2"
+//                         />
+//                       </td>
+//                       <td className="border p-2">
+//                         <input
+//                           type="text"
+//                           value={row.description}
+//                           onChange={(e) => updateRow(index, "description", e.target.value)}
+//                           className="w-full border rounded px-2"
+//                         />
+//                       </td>
+//                       <td className="border p-2 text-center">
+//                         <input
+//                           type="checkbox"
+//                           checked={row.enabled}
+//                           onChange={(e) => updateRow(index, "enabled", e.target.checked)}
+//                           className="mx-auto block"
+//                         />
+//                       </td>
+//                       <td className="border p-2 text-center">
+//                         <button
+//                           onClick={() => deleteRow(index)}
+//                           className="text-red-500 hover:text-red-700"
+//                         >
+//                           Delete
+//                         </button>
+//                       </td>
+//                     </tr>
+//                   ))}
+//                 </tbody>
+//               </table>
+//               <div className="mt-3 flex items-center justify-center">
+//                 <button
+//                   onClick={addRow}
+//                   className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+//                 >
+//                   Add Rule
+//                 </button>
+//               </div>
+//             </div>
+//           )}
+//         </div>
+//       </div>
+//     </div>
+//   );
+// }
+ 
+
+
+// trying for recon files
+
 
 // @ts-nocheck
 // components/admin_v2.tsx
@@ -525,7 +1072,7 @@ import YAML from "js-yaml";
 /** ===== Types ===== */
 interface RuleRow {
   ruleName: string;
-  enabled: boolean; 
+  enabled: boolean;
   description: string;
 }
 type ViewMode = "table" | "yaml";
@@ -545,12 +1092,10 @@ const HARD_STAGE = "AGENT_STAGE";
 
 /** ===== Utility ===== */
 const safe = (v: unknown) => (typeof v === "string" ? v.trim() : "");
-
 /** Safe double-quote Snowflake identifier: A -> "A", handles embedded " as "" */
 function qIdent(id: string) {
   return `"${(id ?? "").replace(/"/g, '""')}"`;
 }
-
 /** Strip surrounding single/double quotes from a segment */
 function stripSurroundingQuotes(s: string): string {
   if (!s) return s;
@@ -560,19 +1105,15 @@ function stripSurroundingQuotes(s: string): string {
   }
   return s;
 }
-
 /** Robust normalizer to relative path under the stage */
 function normalizePath(input: string): string {
   let p = (input ?? "").trim();
   if (p.startsWith("@")) p = p.slice(1);
-
   const QDB = qIdent(HARD_DB);
   const QSC = qIdent(HARD_SCHEMA);
   const QST = qIdent(HARD_STAGE);
-
   const quotedStage = `${QDB}.${QSC}.${QST}`;
   const unquotedStage = `${HARD_DB}.${HARD_SCHEMA}.${HARD_STAGE}`;
-
   // Remove @"DB"."SCHEMA"."STAGE"/ or DB.SCHEMA.STAGE/ prefixes
   for (const prefix of [quotedStage, unquotedStage]) {
     const withSlash = `${prefix}/`;
@@ -580,13 +1121,11 @@ function normalizePath(input: string): string {
       p = p.slice(withSlash.length);
     }
   }
-
   // Handle forms like STAGE/file.yaml or "STAGE"/"file.yaml"
-  const seg0 = (p.split("/")[0] || "").replace(/"/g, "");
+  const seg0 = (p.split("/")[0] ?? "").replace(/"/g, "");
   if (seg0.toUpperCase() === HARD_STAGE.toUpperCase()) {
     p = p.split("/").slice(1).join("/");
   }
-
   // Remove leading slashes and quotes around each segment
   while (p.startsWith("/")) p = p.slice(1);
   p = p
@@ -594,17 +1133,15 @@ function normalizePath(input: string): string {
     .filter(Boolean)
     .map(stripSurroundingQuotes) // DE-QUOTE segments
     .join("/");
-
   return p;
 }
 
 /** ===== Component ===== */
 export function AdminConfigEditor(props: AdminProps) {
   // ---- Env / Config: props first, then env fallback ----
-  const BASE_URL = (safe(props.baseUrl) || safe(import.meta.env.VITE_SF_BASE_URL)).replace(/\/+$/, "");
-  const WAREHOUSE = safe(props.warehouse) || safe(import.meta.env.VITE_SF_WAREHOUSE) || undefined;
-  const TOKEN = safe(props.token) || safe(import.meta.env.VITE_SF_BEARER_TOKEN);
-
+  const BASE_URL = (safe(props.baseUrl) ?? safe(import.meta.env.VITE_SF_BASE_URL)).replace(/\/+$/, "");
+  const WAREHOUSE = safe(props.warehouse) ?? safe(import.meta.env.VITE_SF_WAREHOUSE) ?? undefined;
+  const TOKEN = safe(props.token) ?? safe(import.meta.env.VITE_SF_BEARER_TOKEN);
   // Quoted identifiers ONLY for stage names (not for path segments)
   const QDB = qIdent(HARD_DB);
   const QSC = qIdent(HARD_SCHEMA);
@@ -667,10 +1204,10 @@ export function AdminConfigEditor(props: AdminProps) {
   async function ensureWholeFileFormat() {
     const sql = `
       create or replace file format ${QSC}.FF_WHOLEFILE
-        type = csv
-        field_delimiter = '\\u0001'
-        record_delimiter = 'NONE'
-        skip_header = 0;
+      type = csv
+      field_delimiter = '\\u0001'
+      record_delimiter = 'NONE'
+      skip_header = 0;
     `;
     await runSql(sql);
   }
@@ -680,13 +1217,12 @@ export function AdminConfigEditor(props: AdminProps) {
   async function listStageFiles(): Promise<string[]> {
     const sql = `LIST @${QDB}.${QSC}.${QST}`;
     const rows = await runSql(sql);
-
     const allow = new Set(["dq_config.yaml", "config_agg.yaml", "config_s.yaml"]);
     const normalized = (rows ?? [])
-      .map((r: any[]) => r?.[0])                   // full name/path from LIST
+      .map((r: any[]) => r?.[0]) // full name/path from LIST
       .filter(Boolean)
-      .map((name: string) => normalizePath(name))  // strip stage prefix + quotes
-      .filter((name: string) => allow.has(name));  // restrict to allowed names
+      .map((name: string) => normalizePath(name)) // strip stage prefix + quotes
+      .filter((name: string) => allow.has(name)); // restrict to allowed names
 
     // Deduplicate by lowercased name to collapse quoted/unquoted variants
     const uniqKeys = new Set<string>();
@@ -706,14 +1242,12 @@ export function AdminConfigEditor(props: AdminProps) {
   async function readStageFileText(filename: string): Promise<string> {
     const safeName = normalizePath(filename);
     if (!safeName) throw new Error(`Resolved empty path from '${filename}' after normalization.`);
-
     // IMPORTANT: DO NOT QUOTE path segments; only quote stage identifiers
     const stageSql = `
       select $1 as content
       from @${QDB}.${QSC}.${QST}/${safeName}
-        (file_format => ${QSC}.FF_WHOLEFILE);
+      (file_format => ${QSC}.FF_WHOLEFILE);
     `;
-
     const sRows = await runSql(stageSql);
     const content = sRows?.[0]?.[0];
     if (typeof content === "string") {
@@ -724,9 +1258,8 @@ export function AdminConfigEditor(props: AdminProps) {
 
   // ==== STAGE-ONLY WRITE ====
   async function writeStageFileText(path: string, content: string) {
-    const rel = normalizePath(path);           // de-quote segments
+    const rel = normalizePath(path); // de-quote segments
     const escapedContent = (content ?? "").replace(/'/g, "''");
-
     // IMPORTANT: DO NOT QUOTE the path; quoting creates literal quotes in the file name
     const sql = `
       copy into @${QDB}.${QSC}.${QST}/${rel}
@@ -756,8 +1289,9 @@ export function AdminConfigEditor(props: AdminProps) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  // 🔧 (patched) pass selectedFile so aggregation files are recognized
   const dirty = useMemo(() => {
-    const yamlFromRows = convertRowsToYaml(rows);
+    const yamlFromRows = convertRowsToYaml(rows, selectedFile ?? undefined);
     return Boolean(selectedFile && yamlFromRows !== fileContent);
   }, [rows, fileContent, selectedFile]);
 
@@ -771,7 +1305,7 @@ export function AdminConfigEditor(props: AdminProps) {
         setFiles(items);
       } catch (err: any) {
         console.error(err);
-        setError(err?.message || "Failed to list files.");
+        setError(err?.message ?? "Failed to list files.");
         setFiles([]);
       } finally {
         setLoadingFiles(false);
@@ -779,26 +1313,105 @@ export function AdminConfigEditor(props: AdminProps) {
     })();
   }, []);
 
+  // 🔧 (patched) schema-aware parser: supports dq_checks and aggregation
   function parseYamlToRows(yamlString: string) {
     try {
       const parsed: any = YAML.load(yamlString) ?? {};
-      const dqChecks = parsed?.dq_checks ?? {};
-      const newRows: RuleRow[] = Object.entries(dqChecks).map(([key, value]: any) => ({
-        ruleName: key,
-        enabled: Boolean(value?.enabled),
-        description: value?.description ?? "",
-      }));
-      setRows(newRows);
+      const rowsOut: RuleRow[] = [];
+
+      // Helper: push a dq_checks-style row
+      const pushRule = (name: any, value: any) => {
+        const ruleName = (typeof name === "string" ? name : value?.name ?? "").trim();
+        if (!ruleName) return;
+        rowsOut.push({
+          ruleName,
+          enabled: Boolean(
+            typeof value?.enabled === "boolean"
+              ? value.enabled
+              : (typeof value?.enabled === "string" && /^(true|yes|1)$/i.test(value.enabled))
+          ),
+          description:
+            typeof value?.description === "string"
+              ? value.description
+              : (value?.desc ?? value?.details ?? ""),
+        });
+      };
+
+      // --- Existing supported forms (dq_checks, rules, etc.) ---
+      if (parsed?.dq_checks && typeof parsed.dq_checks === "object" && !Array.isArray(parsed.dq_checks)) {
+        Object.entries(parsed.dq_checks).forEach(([k, v]) => pushRule(k, v));
+      } else if (parsed?.dq_rules && typeof parsed.dq_rules === "object" && !Array.isArray(parsed.dq_rules)) {
+        Object.entries(parsed.dq_rules).forEach(([k, v]) => pushRule(k, v));
+      } else if (parsed?.rules && typeof parsed.rules === "object" && !Array.isArray(parsed.rules)) {
+        Object.entries(parsed.rules).forEach(([k, v]) => pushRule(k, v));
+      } else if (Array.isArray(parsed?.rules)) {
+        parsed.rules.forEach((item: any) => pushRule(item?.name, item));
+      } else if (Array.isArray(parsed?.dq_rules)) {
+        parsed.dq_rules.forEach((item: any) => pushRule(item?.name, item));
+      } else if (Array.isArray(parsed?.dq_checks)) {
+        parsed.dq_checks.forEach((item: any) => pushRule(item?.name, item));
+      } else if (parsed?.config?.dq_checks && typeof parsed.config.dq_checks === "object") {
+        Object.entries(parsed.config.dq_checks).forEach(([k, v]) => pushRule(k, v));
+      } else if (parsed?.checks?.dq_checks && typeof parsed.checks.dq_checks === "object") {
+        Object.entries(parsed.checks.dq_checks).forEach(([k, v]) => pushRule(k, v));
+      }
+
+      // --- NEW: support aggregation array (config_s.yaml / config_agg.yaml) ---
+      else if (Array.isArray(parsed?.aggregation)) {
+        for (const item of parsed.aggregation) {
+          const col = (item?.column ?? "").toString().trim();
+          const rulesVal = item?.rules;
+          const rlist: string[] = Array.isArray(rulesVal)
+            ? rulesVal.map((r: any) => (r ?? "").toString().trim())
+            : typeof rulesVal === "string"
+            ? [rulesVal.trim()]
+            : [];
+          for (const rule of rlist) {
+            if (!rule || !col) continue;
+            rowsOut.push({
+              ruleName: `${rule}(${col})`, // e.g., COUNT(ID)
+              enabled: true,               // default enabled
+              description: "",
+            });
+          }
+        }
+      }
+
+      setRows(rowsOut); // (empty array -> table empty)
     } catch (err) {
       console.error("Invalid YAML:", err);
       // keep rows unchanged
     }
   }
 
-  function convertRowsToYaml(list: RuleRow[]) {
+  // 🔧 (patched) serializer: preserves aggregation layout for config_s/config_agg
+  function convertRowsToYaml(list: RuleRow[], currentFile?: string) {
+    const isAggregationFile = !!(currentFile && /config_(agg|s)\.yaml$/i.test(currentFile));
+
+    if (isAggregationFile) {
+      // Convert rows like RULE(COLUMN) back into:
+      // aggregation: [{ column, rules: [...] }, ...]
+      const byCol: Record<string, Set<string>> = {};
+      for (const row of list) {
+        const name = (row.ruleName ?? "").trim();
+        const m = name.match(/^([A-Za-z_][A-Za-z0-9_]*)\(([^)]+)\)$/); // RULE(COLUMN)
+        if (!m) continue;
+        const rule = m[1];
+        const col = m[2];
+        if (!byCol[col]) byCol[col] = new Set<string>();
+        if (!!row.enabled) byCol[col].add(rule); // include only enabled rules
+      }
+      const aggregation = Object.entries(byCol).map(([column, rulesSet]) => ({
+        column,
+        rules: Array.from(rulesSet),
+      }));
+      return YAML.dump({ aggregation }, { lineWidth: 120 });
+    }
+
+    // Default: original dq_checks map form
     const dqChecks: Record<string, { enabled: boolean; description: string }> = {};
     list.forEach((row) => {
-      const name = (row.ruleName || "").trim();
+      const name = (row.ruleName ?? "").trim();
       if (!name) return;
       dqChecks[name] = {
         enabled: !!row.enabled,
@@ -822,7 +1435,7 @@ export function AdminConfigEditor(props: AdminProps) {
       setSuccess(`Loaded: ${normalized}`);
     } catch (err: any) {
       console.error(err);
-      setError(err?.message || "Failed to load file.");
+      setError(err?.message ?? "Failed to load file.");
     } finally {
       setLoadingDoc(false);
     }
@@ -836,39 +1449,34 @@ export function AdminConfigEditor(props: AdminProps) {
     setSuccess(null);
     try {
       // Basic validation: no duplicate rule names
-      const names = rows.map((r) => (r.ruleName || "").trim()).filter(Boolean);
+      const names = rows.map((r) => (r.ruleName ?? "").trim()).filter(Boolean);
       const dup = names.find((n, i) => names.indexOf(n) !== i);
       if (dup) {
         throw new Error(`Duplicate rule name: ${dup}`);
       }
-
       const path = normalizePath(selectedFile);
-      const toSave = viewMode === "table" ? convertRowsToYaml(rows) : fileContent;
-
+      // 🔧 (patched) include selectedFile so aggregation is preserved
+      const toSave = viewMode === "table" ? convertRowsToYaml(rows, selectedFile ?? undefined) : fileContent;
       await ensureWholeFileFormat();
       await writeStageFileText(path, toSave);
-
       // Update local editor state
       setFileContent(toSave);
-
       // Refresh list and re-read from stage
       setLoadingFiles(true);
       const items = await listStageFiles();
       setFiles(items);
       setLoadingFiles(false);
-
       setLoadingDoc(true);
       const fresh = await readStageFileText(path);
       setSelectedFile(path);
       setFileContent(fresh);
       parseYamlToRows(fresh);
       setLoadingDoc(false);
-
       // Show unquoted path in banner
       setSuccess(`Saved to ${HARD_DB}.${HARD_SCHEMA}.${HARD_STAGE}/${path}`);
     } catch (err: any) {
       console.error(err);
-      setError(err?.message || "Failed to save file.");
+      setError(err?.message ?? "Failed to save file.");
     } finally {
       setSaving(false);
     }
@@ -879,14 +1487,12 @@ export function AdminConfigEditor(props: AdminProps) {
       ...prev,
       { ruleName: `new_rule_${prev.length + 1}`, enabled: false, description: "" },
     ]);
-
   const deleteRow = (index: number) =>
     setRows((prev) => {
       const updated = [...prev];
       updated.splice(index, 1);
       return updated;
     });
-
   const updateRow = (index: number, field: keyof RuleRow, value: RuleRow[keyof RuleRow]) =>
     setRows((prev) => {
       const updated = [...prev];
@@ -906,7 +1512,8 @@ export function AdminConfigEditor(props: AdminProps) {
           <button
             onClick={() => {
               if (viewMode === "table") {
-                const updatedYaml = convertRowsToYaml(rows);
+                // 🔧 (patched) include selectedFile when leaving table view
+                const updatedYaml = convertRowsToYaml(rows, selectedFile ?? undefined);
                 setFileContent(updatedYaml);
               }
               setViewMode((m) => (m === "yaml" ? "table" : "yaml"));
@@ -1052,8 +1659,3 @@ export function AdminConfigEditor(props: AdminProps) {
     </div>
   );
 }
- 
-
-
-//trying for push
-
