@@ -514,6 +514,547 @@
 
 
 
+// 8 jan - working and displaying , but editing and adding not working
+
+// // @ts-nocheck
+// // components/admin_v2.tsx
+// import { useEffect, useMemo, useState } from "react";
+// import CodeMirror from "@uiw/react-codemirror";
+// import { yaml as yamlLang } from "@codemirror/lang-yaml";
+// import { EditorView } from "@uiw/react-codemirror";
+// import YAML from "js-yaml";
+
+// /** ===== Types ===== */
+// interface RuleRow {
+//   ruleName: string;
+//   enabled: boolean;
+//   description: string;
+// }
+// type ViewMode = "table" | "yaml";
+
+// /** ===== Props ===== */
+// type AdminProps = {
+//   onClose: () => void;
+//   baseUrl?: string;
+//   database?: string;
+//   schema?: string;
+//   warehouse?: string;
+//   token?: string;
+//   stage?: string; // defaults to AGENT_STAGE
+// };
+
+// /** ===== Utility ===== */
+// const safe = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+
+// // Quote Snowflake identifiers safely: MY_DB -> "MY_DB", handles embedded quotes.
+// function qIdent(id: string) {
+//   return `"${(id || "").replace(/"/g, '""')}"`;
+// }
+
+// /** ===== Component ===== */
+// export function AdminConfigEditor(props: AdminProps) {
+//   // ---- Env / Config: props first, then env fallback ----
+//   const BASE_URL = (safe(props.baseUrl) || safe(import.meta.env.VITE_SF_BASE_URL)).replace(/\/+$/, "");
+//   const DATABASE = safe(props.database) || safe(import.meta.env.VITE_SF_DATABASE);
+//   const SCHEMA = safe(props.schema) || safe(import.meta.env.VITE_SF_SCHEMA);
+//   const WAREHOUSE = safe(props.warehouse) || safe(import.meta.env.VITE_SF_WAREHOUSE) || undefined;
+//   const TOKEN = safe(props.token) || safe(import.meta.env.VITE_SF_BEARER_TOKEN);
+//   const STAGE = props.stage || "AGENT_STAGE";
+
+//   // Quoted versions (for SQL where required)
+//   const QDB = qIdent(DATABASE);
+//   const QSC = qIdent(SCHEMA);
+//   const QST = qIdent(STAGE);
+
+//   // Build Snowflake API details
+//   const STATEMENTS_URL = `${BASE_URL}/api/v2/statements`;
+//   const SF_HEADERS: Record<string, string> = {
+//     Authorization: `Bearer ${TOKEN}`,
+//     "Content-Type": "application/json",
+//     Accept: "application/json",
+//   };
+
+//   /** ===== Helpers ===== */
+//   // Normalize any path coming from LIST, user selection, or quoted Snowflake syntax.
+//   // Handles quoted identifiers and quoted segments:
+//   // @"DB"."SCHEMA"."STAGE"/"rules"/"file.yaml" -> rules/file.yaml
+//   function normalizePath(input: string): string {
+//     // Trim and remove surrounding SINGLE or DOUBLE quotes
+//     let p = (input || "").trim().replace(/^['"]+|['"]+$/g, "");
+
+//     // Build both unquoted and quoted stage prefixes
+//     const unquotedPrefix = `@${DATABASE}.${SCHEMA}.${STAGE}/`;
+//     const quotedPrefix = `@${QDB}.${QSC}.${QST}/`;
+
+//     // Remove either prefix if present
+//     if (p.startsWith(quotedPrefix)) p = p.slice(quotedPrefix.length);
+//     else if (p.startsWith(unquotedPrefix)) p = p.slice(unquotedPrefix.length);
+
+//     // Also handle paths that start with STAGE/ (quoted or unquoted)
+//     const seg0 = p.split("/")[0] ?? "";
+//     const seg0Unquoted = seg0.replace(/["]/g, "");
+//     if (seg0Unquoted.toLowerCase() === STAGE.toLowerCase()) {
+//       p = p.split("/").slice(1).join("/");
+//     }
+
+//     // Strip leading slashes
+//     while (p.startsWith("/")) p = p.slice(1);
+
+//     // Remove double quotes around EACH remaining segment (e.g., "rules"/"file.yaml")
+//     p = p
+//       .split("/")
+//       .map((seg) => seg.replace(/^"+|"+$/g, ""))
+//       .join("/");
+
+//     return p;
+//   }
+
+//   // Unescape typical HTML entities the Snowflake API may return
+//   function unescapeHtml(s: string): string {
+//     return (s || "")
+//       .replaceAll("&lt;", "<")
+//       .replaceAll("&gt;", ">")
+//       .replaceAll("&quot;", '"')
+//       .replaceAll("&#39;", "'")
+//       .replaceAll("&amp;", "&");
+//   }
+
+//   async function runSql(
+//     statement: string,
+//     timeout: number = 120,
+//     context: { database?: string; schema?: string; warehouse?: string } = {
+//       database: DATABASE,
+//       schema: SCHEMA,
+//       warehouse: WAREHOUSE,
+//     }
+//   ): Promise<any[]> {
+//     const payload: Record<string, any> = {
+//       statement,
+//       timeout,
+//       database: context.database,
+//       schema: context.schema,
+//     };
+//     if (context.warehouse) payload.warehouse = context.warehouse;
+
+//     const resp = await fetch(STATEMENTS_URL, {
+//       method: "POST",
+//       headers: SF_HEADERS,
+//       body: JSON.stringify(payload),
+//       cache: "no-store",
+//     });
+//     if (!resp.ok) {
+//       const msg = await resp.text().catch(() => "");
+//       throw new Error(`SQL POST failed: ${resp.status} ${msg}`);
+//     }
+//     const data = await resp.json();
+
+//     // Synchronous result
+//     if (data?.data) return data.data;
+
+//     // Otherwise poll once
+//     const statusUrl: string | undefined = data?.statementStatusUrl;
+//     if (!statusUrl) {
+//       throw new Error(`No data and no statusUrl:\n${JSON.stringify(data, null, 2)}`);
+//     }
+//     const pollResp = await fetch(BASE_URL + statusUrl, { headers: SF_HEADERS, cache: "no-store" });
+//     if (!pollResp.ok) {
+//       const msg = await pollResp.text().catch(() => "");
+//       throw new Error(`SQL GET status failed: ${pollResp.status} ${msg}`);
+//     }
+//     const j = await pollResp.json();
+//     if (!j?.data) throw new Error(`Polled status but no data:\n${JSON.stringify(j, null, 2)}`);
+//     return j.data;
+//   }
+
+//   /** ===== SQL helpers ===== */
+//   // Whole-file format used for reading entire file content as $1
+//   async function ensureWholeFileFormat() {
+//     const sql = `
+//       create or replace file format ${QSC}.FF_WHOLEFILE
+//       type = csv
+//       field_delimiter = '\\u0001'
+//       record_delimiter = 'NONE'
+//       skip_header = 0;
+//     `;
+//     await runSql(sql);
+//   }
+
+//   // LIST files from the stage and produce normalized relative paths
+//   // Only show: config_agg.yaml, config_s.yaml, dq_config.yaml
+//   async function listStageFiles(): Promise<string[]> {
+//     const sql = `LIST @${QDB}.${QSC}.${QST}`;
+//     const rows = await runSql(sql);
+
+//     // Accept only these three files, regardless of quoted/unquoted listing forms
+//     const allow = new Set([
+//       "dq_config.yaml",
+//       "config_agg.yaml",
+//       "config_s.yaml",
+//     ]);
+
+//     return (rows ?? [])
+//       .map((r: any[]) => r?.[0])
+//       .filter(Boolean)
+//       .map((name: string) => normalizePath(name))
+//       .filter((name: string) => allow.has(name));
+//   }
+
+//   // ==== STAGE-ONLY READ ====
+//   async function readStageFileText(filename: string): Promise<string> {
+//     const safeName = normalizePath(filename);
+//     if (!safeName) throw new Error(`Resolved empty path from '${filename}' after normalization.`);
+
+//     // Special rule: ALWAYS read dq_config.yaml from @"MY_DB"."PUBLIC"."AGENT_STAGE"/dq_config.yaml
+//     // (i.e., using quoted identifiers)
+//     let stageSql: string;
+//     if (safeName.toLowerCase() === "dq_config.yaml") {
+//       stageSql = `
+//         select $1 as content
+//         from @${qIdent("MY_DB")}.${qIdent("PUBLIC")}.${qIdent("AGENT_STAGE")}/dq_config.yaml
+//           (file_format => ${QSC}.FF_WHOLEFILE);
+//       `;
+//     } else {
+//       // Other files: read from the configured stage (quoted identifiers)
+//       stageSql = `
+//         select $1 as content
+//         from @${QDB}.${QSC}.${QST}/${safeName} (file_format => ${QSC}.FF_WHOLEFILE);
+//       `;
+//     }
+
+//     const sRows = await runSql(stageSql);
+//     if (sRows?.[0]?.[0]) {
+//       return unescapeHtml(sRows[0][0]);
+//     }
+//     throw new Error(`No content returned for ${safeName}. Check path and FF_WHOLEFILE.`);
+//   }
+
+//   // ==== STAGE-ONLY WRITE ====
+//   async function writeStageFileText(path: string, content: string) {
+//     const escapedPath = path.replace(/'/g, "''");
+//     const escapedContent = content.replace(/'/g, "''");
+
+//     // Special rule: write dq_config.yaml to @"MY_DB"."PUBLIC"."AGENT_STAGE"/dq_config.yaml
+//     let sql: string;
+//     if (path.toLowerCase() === "dq_config.yaml") {
+//       sql = `
+//         copy into @${qIdent("MY_DB")}.${qIdent("PUBLIC")}.${qIdent("AGENT_STAGE")}/"dq_config.yaml"
+//         from ( select '${escapedContent}' as content )
+//         file_format = (type = csv field_delimiter='\\u0001' record_delimiter='NONE' skip_header=0)
+//         overwrite = true;
+//       `;
+//     } else {
+//       sql = `
+//         copy into @${QDB}.${QSC}.${QST}/"${escapedPath}"
+//         from ( select '${escapedContent}' as content )
+//         file_format = (type = csv field_delimiter='\\u0001' record_delimiter='NONE' skip_header=0)
+//         overwrite = true;
+//       `;
+//     }
+
+//     await runSql(sql);
+//   }
+
+//   /** ===== UI state ===== */
+//   const [files, setFiles] = useState<string[]>([]);
+//   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+//   const [viewMode, setViewMode] = useState<ViewMode>("table");
+//   const [fileContent, setFileContent] = useState<string>("");
+//   const [rows, setRows] = useState<RuleRow[]>([]);
+//   const [saving, setSaving] = useState<boolean>(false);
+//   const [loadingFiles, setLoadingFiles] = useState<boolean>(false);
+//   const [loadingDoc, setLoadingDoc] = useState<boolean>(false);
+
+//   const dirty = useMemo(() => {
+//     const yamlFromRows = convertRowsToYaml(rows);
+//     return Boolean(selectedFile && yamlFromRows !== fileContent);
+//   }, [rows, fileContent, selectedFile]);
+
+//   useEffect(() => {
+//     (async () => {
+//       setLoadingFiles(true);
+//       try {
+//         await ensureWholeFileFormat();
+//         const items = await listStageFiles();
+//         setFiles(items);
+//       } catch (err) {
+//         console.error(err);
+//         setFiles([]);
+//       } finally {
+//         setLoadingFiles(false);
+//       }
+//     })();
+//   }, []);
+
+//   function parseYamlToRows(yamlString: string) {
+//     try {
+//       const parsed: any = YAML.load(yamlString) ?? {};
+//       const dqChecks = parsed?.dq_checks ?? {};
+//       const newRows: RuleRow[] = Object.entries(dqChecks).map(([key, value]: any) => ({
+//         ruleName: key,
+//         enabled: Boolean(value?.enabled),
+//         description: value?.description ?? "",
+//       }));
+//       setRows(newRows);
+//     } catch (err) {
+//       console.error("Invalid YAML:", err);
+//       // keep rows unchanged
+//     }
+//   }
+
+//   function convertRowsToYaml(list: RuleRow[]) {
+//     const dqChecks: Record<string, { enabled: boolean; description: string }> = {};
+//     list.forEach((row) => {
+//       if (!row.ruleName) return;
+//       dqChecks[row.ruleName] = {
+//         enabled: !!row.enabled,
+//         description: row.description ?? "",
+//       };
+//     });
+//     return YAML.dump({ dq_checks: dqChecks });
+//   }
+
+//   const loadFile = async (filename: string) => {
+//     setLoadingDoc(true);
+//     try {
+//       const normalized = normalizePath(filename);
+//       const content = await readStageFileText(normalized);
+//       setSelectedFile(normalized);
+//       setFileContent(content);
+//       parseYamlToRows(content);
+//       setViewMode("table");
+//     } catch (err) {
+//       console.error(err);
+//     } finally {
+//       setLoadingDoc(false);
+//     }
+//   };
+
+//   // SAVE: writes directly to STAGE, then refreshes UI.
+//   const save = async () => {
+//     if (!selectedFile) return;
+//     setSaving(true);
+//     try {
+//       const path = normalizePath(selectedFile);
+//       const toSave = viewMode === "table" ? convertRowsToYaml(rows) : fileContent;
+
+//       await ensureWholeFileFormat();
+//       await writeStageFileText(path, toSave);
+
+//       // Update local editor state
+//       setFileContent(toSave);
+
+//       // Refresh list and re-read from stage
+//       setLoadingFiles(true);
+//       const items = await listStageFiles();
+//       setFiles(items);
+//       setLoadingFiles(false);
+
+//       setLoadingDoc(true);
+//       const fresh = await readStageFileText(path);
+//       setSelectedFile(path);
+//       setFileContent(fresh);
+//       parseYamlToRows(fresh);
+//       setLoadingDoc(false);
+//     } catch (err) {
+//       console.error(err);
+//     } finally {
+//       setSaving(false);
+//     }
+//   };
+
+//   const addRow = () =>
+//     setRows((prev) => [...prev, { ruleName: `new_rule_${prev.length + 1}`, enabled: false, description: "" }]);
+
+//   const deleteRow = (index: number) =>
+//     setRows((prev) => {
+//       const updated = [...prev];
+//       updated.splice(index, 1);
+//       return updated;
+//     });
+
+//   const updateRow = (index: number, field: keyof RuleRow, value: RuleRow[keyof RuleRow]) =>
+//     setRows((prev) => {
+//       const updated = [...prev];
+//       updated[index] = { ...updated[index], [field]: value };
+//       return updated;
+//     });
+
+//   // ===== Render =====
+//   return (
+//     <div className="fixed inset-0 z-50 bg-white overflow-auto p-4">
+//       <div className="flex items-center justify-between p-2 border-b border-gray-200">
+//         <h2 className="text-2xl font-bold text-gray-800">
+//           {selectedFile ? `Editing: ${selectedFile}` : "Config Editor"}
+//         </h2>
+//         <div className="flex items-center gap-2">
+//           {/* Force Reload: re-list stage and re-read current file */}
+//           <button
+//             onClick={async () => {
+//               setLoadingFiles(true);
+//               try {
+//                 const items = await listStageFiles();
+//                 setFiles(items);
+//               } finally {
+//                 setLoadingFiles(false);
+//               }
+//               if (selectedFile) {
+//                 await loadFile(selectedFile);
+//               }
+//             }}
+//             className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300"
+//           >
+//             Force Reload
+//           </button>
+
+//           <button
+//             onClick={() => {
+//               if (viewMode === "table") {
+//                 const updatedYaml = convertRowsToYaml(rows);
+//                 setFileContent(updatedYaml);
+//               }
+//               setViewMode((m) => (m === "yaml" ? "table" : "yaml"));
+//             }}
+//             className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300"
+//           >
+//             {viewMode === "yaml" ? "Table View" : "YAML View"}
+//           </button>
+
+//           <button
+//             onClick={save}
+//             disabled={!selectedFile || saving}
+//             className={`px-6 py-2 font-semibold rounded-lg text-white ${
+//               saving ? "bg-blue-400" : "bg-blue-600 hover:bg-blue-700"
+//             }`}
+//           >
+//             {saving ? "Saving..." : dirty ? "Save *" : "Save"}
+//           </button>
+
+//           <button
+//             onClick={() => {
+//               if (dirty && !window.confirm("You have unsaved changes. Close anyway?")) return;
+//               props.onClose();
+//             }}
+//             className="px-6 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600"
+//           >
+//             Close
+//           </button>
+//         </div>
+//       </div>
+
+//       <div className="flex h-[80vh]">
+//         {/* Sidebar */}
+//         <div className="w-1/4 max-w-xs bg-gray-50 border-r border-gray-200 p-5 overflow-y-auto rounded-md">
+//           <h3 className="font-semibold text-lg text-gray-700 mb-3">Config Files</h3>
+//           {loadingFiles && <div className="text-gray-500 text-sm mb-2">Loading...</div>}
+//           <ul className="space-y-1">
+//             {(files ?? []).map((file) => (
+//               <li key={file}>
+//                 <button
+//                   onClick={() => loadFile(file)}
+//                   className={`block w-full text-left p-2 rounded-md transition-colors duration-150 ${
+//                     selectedFile === file
+//                       ? "bg-blue-100 text-blue-700 font-medium"
+//                       : "text-gray-600 hover:bg-gray-200"
+//                   }`}
+//                 >
+//                   {file}
+//                 </button>
+//               </li>
+//             ))}
+//           </ul>
+//         </div>
+
+//         {/* Editor panel */}
+//         <div className="w-4/5 p-4 border border-gray-300 rounded overflow-y-auto">
+//           {!selectedFile ? (
+//             <div className="flex items-center justify-center h-full text-gray-500 text-xl">
+//               Select a file from the left to edit.
+//             </div>
+//           ) : loadingDoc ? (
+//             <div className="text-gray-600">Loading document...</div>
+//           ) : viewMode === "yaml" ? (
+//             <CodeMirror
+//               value={fileContent}
+//               onChange={(value) => {
+//                 setFileContent(value ?? "");
+//                 try {
+//                   parseYamlToRows(value ?? "");
+//                 } catch {}
+//               }}
+//               height="70vh"
+//               extensions={[yamlLang(), EditorView.lineWrapping]}
+//               basicSetup={{ lineNumbers: true, highlightActiveLine: true }}
+//               style={{ fontFamily: "monospace", textAlign: "left", width: "100%" }}
+//             />
+//           ) : (
+//             <div>
+//               <table className="min-w-full border border-gray-300">
+//                 <thead>
+//                   <tr className="bg-gray-100">
+//                     <th className="border p-2 text-left">Rule Name</th>
+//                     <th className="border p-2 text-left">Description</th>
+//                     <th className="border p-2 text-left">Enabled</th>
+//                     <th className="border p-2 text-left">Actions</th>
+//                   </tr>
+//                 </thead>
+//                 <tbody>
+//                   {rows.map((row, index) => (
+//                     <tr key={index}>
+//                       <td className="border p-2">
+//                         <input
+//                           type="text"
+//                           value={row.ruleName}
+//                           onChange={(e) => updateRow(index, "ruleName", e.target.value)}
+//                           className="w-full border rounded px-2"
+//                         />
+//                       </td>
+//                       <td className="border p-2">
+//                         <input
+//                           type="text"
+//                           value={row.description}
+//                           onChange={(e) => updateRow(index, "description", e.target.value)}
+//                           className="w-full border rounded px-2"
+//                         />
+//                       </td>
+//                       <td className="border p-2 text-center">
+//                         <input
+//                           type="checkbox"
+//                           checked={row.enabled}
+//                           onChange={(e) => updateRow(index, "enabled", e.target.checked)}
+//                           className="mx-auto block"
+//                         />
+//                       </td>
+//                       <td className="border p-2 text-center">
+//                         <button
+//                           onClick={() => deleteRow(index)}
+//                           className="text-red-500 hover:text-red-700"
+//                         >
+//                           Delete
+//                         </button>
+//                       </td>
+//                     </tr>
+//                   ))}
+//                 </tbody>
+//               </table>
+
+//               <div className="mt-3 flex items-center justify-center">
+//                 <button
+//                   onClick={addRow}
+//                   className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+//                 >
+//                   Add Rule
+//                 </button>
+//               </div>
+//             </div>
+//           )}
+//         </div>
+//       </div>
+//     </div>
+//   );
+// }
+
+
+//trying 
 
 
 // @ts-nocheck
@@ -536,35 +1077,81 @@ type ViewMode = "table" | "yaml";
 type AdminProps = {
   onClose: () => void;
   baseUrl?: string;
-  database?: string;
-  schema?: string;
   warehouse?: string;
   token?: string;
-  stage?: string; // defaults to AGENT_STAGE
 };
+
+/** ===== Hardcoded stage per your environment ===== */
+const HARD_DB = "MY_DB";
+const HARD_SCHEMA = "PUBLIC";
+const HARD_STAGE = "AGENT_STAGE";
 
 /** ===== Utility ===== */
 const safe = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 
-// Quote Snowflake identifiers safely: MY_DB -> "MY_DB", handles embedded quotes.
+/** Safe double-quote Snowflake identifier: A -> "A", handles embedded " as "" */
 function qIdent(id: string) {
-  return `"${(id || "").replace(/"/g, '""')}"`;
+  return `"${(id ?? "").replace(/"/g, '""')}"`;
+}
+
+/** Strip surrounding single/double quotes from a segment */
+function stripSurroundingQuotes(s: string): string {
+  if (!s) return s;
+  const first = s[0], last = s[s.length - 1];
+  if ((first === `"` && last === `"`) || (first === `'` && last === `'`)) {
+    return s.slice(1, -1);
+  }
+  return s;
+}
+
+/** Robust normalizer to relative path under the stage */
+function normalizePath(input: string): string {
+  let p = (input ?? "").trim();
+  if (p.startsWith("@")) p = p.slice(1);
+
+  const QDB = qIdent(HARD_DB);
+  const QSC = qIdent(HARD_SCHEMA);
+  const QST = qIdent(HARD_STAGE);
+
+  const quotedStage = `${QDB}.${QSC}.${QST}`;
+  const unquotedStage = `${HARD_DB}.${HARD_SCHEMA}.${HARD_STAGE}`;
+
+  // Remove @"DB"."SCHEMA"."STAGE"/ or DB.SCHEMA.STAGE/ prefixes
+  for (const prefix of [quotedStage, unquotedStage]) {
+    const withSlash = `${prefix}/`;
+    if (p.startsWith(withSlash)) {
+      p = p.slice(withSlash.length);
+    }
+  }
+
+  // Handle forms like STAGE/file.yaml or "STAGE"/"file.yaml"
+  const seg0 = (p.split("/")[0] || "").replace(/"/g, "");
+  if (seg0.toUpperCase() === HARD_STAGE.toUpperCase()) {
+    p = p.split("/").slice(1).join("/");
+  }
+
+  // Remove leading slashes and quotes around each segment
+  while (p.startsWith("/")) p = p.slice(1);
+  p = p
+    .split("/")
+    .filter(Boolean)
+    .map(stripSurroundingQuotes) // DE-QUOTE segments
+    .join("/");
+
+  return p;
 }
 
 /** ===== Component ===== */
 export function AdminConfigEditor(props: AdminProps) {
   // ---- Env / Config: props first, then env fallback ----
   const BASE_URL = (safe(props.baseUrl) || safe(import.meta.env.VITE_SF_BASE_URL)).replace(/\/+$/, "");
-  const DATABASE = safe(props.database) || safe(import.meta.env.VITE_SF_DATABASE);
-  const SCHEMA = safe(props.schema) || safe(import.meta.env.VITE_SF_SCHEMA);
   const WAREHOUSE = safe(props.warehouse) || safe(import.meta.env.VITE_SF_WAREHOUSE) || undefined;
   const TOKEN = safe(props.token) || safe(import.meta.env.VITE_SF_BEARER_TOKEN);
-  const STAGE = props.stage || "AGENT_STAGE";
 
-  // Quoted versions (for SQL where required)
-  const QDB = qIdent(DATABASE);
-  const QSC = qIdent(SCHEMA);
-  const QST = qIdent(STAGE);
+  // Quoted identifiers ONLY for stage names (not for path segments)
+  const QDB = qIdent(HARD_DB);
+  const QSC = qIdent(HARD_SCHEMA);
+  const QST = qIdent(HARD_STAGE);
 
   // Build Snowflake API details
   const STATEMENTS_URL = `${BASE_URL}/api/v2/statements`;
@@ -575,56 +1162,12 @@ export function AdminConfigEditor(props: AdminProps) {
   };
 
   /** ===== Helpers ===== */
-  // Normalize any path coming from LIST, user selection, or quoted Snowflake syntax.
-  // Handles quoted identifiers and quoted segments:
-  // @"DB"."SCHEMA"."STAGE"/"rules"/"file.yaml" -> rules/file.yaml
-  function normalizePath(input: string): string {
-    // Trim and remove surrounding SINGLE or DOUBLE quotes
-    let p = (input || "").trim().replace(/^['"]+|['"]+$/g, "");
-
-    // Build both unquoted and quoted stage prefixes
-    const unquotedPrefix = `@${DATABASE}.${SCHEMA}.${STAGE}/`;
-    const quotedPrefix = `@${QDB}.${QSC}.${QST}/`;
-
-    // Remove either prefix if present
-    if (p.startsWith(quotedPrefix)) p = p.slice(quotedPrefix.length);
-    else if (p.startsWith(unquotedPrefix)) p = p.slice(unquotedPrefix.length);
-
-    // Also handle paths that start with STAGE/ (quoted or unquoted)
-    const seg0 = p.split("/")[0] ?? "";
-    const seg0Unquoted = seg0.replace(/["]/g, "");
-    if (seg0Unquoted.toLowerCase() === STAGE.toLowerCase()) {
-      p = p.split("/").slice(1).join("/");
-    }
-
-    // Strip leading slashes
-    while (p.startsWith("/")) p = p.slice(1);
-
-    // Remove double quotes around EACH remaining segment (e.g., "rules"/"file.yaml")
-    p = p
-      .split("/")
-      .map((seg) => seg.replace(/^"+|"+$/g, ""))
-      .join("/");
-
-    return p;
-  }
-
-  // Unescape typical HTML entities the Snowflake API may return
-  function unescapeHtml(s: string): string {
-    return (s || "")
-      .replaceAll("&lt;", "<")
-      .replaceAll("&gt;", ">")
-      .replaceAll("&quot;", '"')
-      .replaceAll("&#39;", "'")
-      .replaceAll("&amp;", "&");
-  }
-
   async function runSql(
     statement: string,
     timeout: number = 120,
     context: { database?: string; schema?: string; warehouse?: string } = {
-      database: DATABASE,
-      schema: SCHEMA,
+      database: HARD_DB,
+      schema: HARD_SCHEMA,
       warehouse: WAREHOUSE,
     }
   ): Promise<any[]> {
@@ -635,7 +1178,6 @@ export function AdminConfigEditor(props: AdminProps) {
       schema: context.schema,
     };
     if (context.warehouse) payload.warehouse = context.warehouse;
-
     const resp = await fetch(STATEMENTS_URL, {
       method: "POST",
       headers: SF_HEADERS,
@@ -647,10 +1189,8 @@ export function AdminConfigEditor(props: AdminProps) {
       throw new Error(`SQL POST failed: ${resp.status} ${msg}`);
     }
     const data = await resp.json();
-
     // Synchronous result
     if (data?.data) return data.data;
-
     // Otherwise poll once
     const statusUrl: string | undefined = data?.statementStatusUrl;
     if (!statusUrl) {
@@ -666,37 +1206,43 @@ export function AdminConfigEditor(props: AdminProps) {
     return j.data;
   }
 
-  /** ===== SQL helpers ===== */
   // Whole-file format used for reading entire file content as $1
   async function ensureWholeFileFormat() {
     const sql = `
       create or replace file format ${QSC}.FF_WHOLEFILE
-      type = csv
-      field_delimiter = '\\u0001'
-      record_delimiter = 'NONE'
-      skip_header = 0;
+        type = csv
+        field_delimiter = '\\u0001'
+        record_delimiter = 'NONE'
+        skip_header = 0;
     `;
     await runSql(sql);
   }
 
   // LIST files from the stage and produce normalized relative paths
-  // Only show: config_agg.yaml, config_s.yaml, dq_config.yaml
+  // Only show: config_agg.yaml, config_s.yaml, dq_config.yaml (deduplicated)
   async function listStageFiles(): Promise<string[]> {
     const sql = `LIST @${QDB}.${QSC}.${QST}`;
     const rows = await runSql(sql);
 
-    // Accept only these three files, regardless of quoted/unquoted listing forms
-    const allow = new Set([
-      "dq_config.yaml",
-      "config_agg.yaml",
-      "config_s.yaml",
-    ]);
-
-    return (rows ?? [])
-      .map((r: any[]) => r?.[0])
+    const allow = new Set(["dq_config.yaml", "config_agg.yaml", "config_s.yaml"]);
+    const normalized = (rows ?? [])
+      .map((r: any[]) => r?.[0])                   // full name/path from LIST
       .filter(Boolean)
-      .map((name: string) => normalizePath(name))
-      .filter((name: string) => allow.has(name));
+      .map((name: string) => normalizePath(name))  // strip stage prefix + quotes
+      .filter((name: string) => allow.has(name));  // restrict to allowed names
+
+    // Deduplicate by lowercased name to collapse quoted/unquoted variants
+    const uniqKeys = new Set<string>();
+    const finalList: string[] = [];
+    for (const n of normalized) {
+      const key = n.toLowerCase();
+      if (!uniqKeys.has(key)) {
+        uniqKeys.add(key);
+        finalList.push(n);
+      }
+    }
+    finalList.sort((a, b) => a.localeCompare(b));
+    return finalList;
   }
 
   // ==== STAGE-ONLY READ ====
@@ -704,53 +1250,40 @@ export function AdminConfigEditor(props: AdminProps) {
     const safeName = normalizePath(filename);
     if (!safeName) throw new Error(`Resolved empty path from '${filename}' after normalization.`);
 
-    // Special rule: ALWAYS read dq_config.yaml from @"MY_DB"."PUBLIC"."AGENT_STAGE"/dq_config.yaml
-    // (i.e., using quoted identifiers)
-    let stageSql: string;
-    if (safeName.toLowerCase() === "dq_config.yaml") {
-      stageSql = `
-        select $1 as content
-        from @${qIdent("MY_DB")}.${qIdent("PUBLIC")}.${qIdent("AGENT_STAGE")}/dq_config.yaml
-          (file_format => ${QSC}.FF_WHOLEFILE);
-      `;
-    } else {
-      // Other files: read from the configured stage (quoted identifiers)
-      stageSql = `
-        select $1 as content
-        from @${QDB}.${QSC}.${QST}/${safeName} (file_format => ${QSC}.FF_WHOLEFILE);
-      `;
-    }
+    // IMPORTANT: DO NOT QUOTE path segments; only quote stage identifiers
+    const stageSql = `
+      select $1 as content
+      from @${QDB}.${QSC}.${QST}/${safeName}
+        (file_format => ${QSC}.FF_WHOLEFILE);
+    `;
 
     const sRows = await runSql(stageSql);
-    if (sRows?.[0]?.[0]) {
-      return unescapeHtml(sRows[0][0]);
+    const content = sRows?.[0]?.[0];
+    if (typeof content === "string") {
+      return content; // plain text returned by SQL API
     }
     throw new Error(`No content returned for ${safeName}. Check path and FF_WHOLEFILE.`);
   }
 
   // ==== STAGE-ONLY WRITE ====
   async function writeStageFileText(path: string, content: string) {
-    const escapedPath = path.replace(/'/g, "''");
-    const escapedContent = content.replace(/'/g, "''");
+    const rel = normalizePath(path);           // de-quote segments
+    const escapedContent = (content ?? "").replace(/'/g, "''");
 
-    // Special rule: write dq_config.yaml to @"MY_DB"."PUBLIC"."AGENT_STAGE"/dq_config.yaml
-    let sql: string;
-    if (path.toLowerCase() === "dq_config.yaml") {
-      sql = `
-        copy into @${qIdent("MY_DB")}.${qIdent("PUBLIC")}.${qIdent("AGENT_STAGE")}/"dq_config.yaml"
-        from ( select '${escapedContent}' as content )
-        file_format = (type = csv field_delimiter='\\u0001' record_delimiter='NONE' skip_header=0)
-        overwrite = true;
-      `;
-    } else {
-      sql = `
-        copy into @${QDB}.${QSC}.${QST}/"${escapedPath}"
-        from ( select '${escapedContent}' as content )
-        file_format = (type = csv field_delimiter='\\u0001' record_delimiter='NONE' skip_header=0)
-        overwrite = true;
-      `;
-    }
-
+    // IMPORTANT: DO NOT QUOTE the path; quoting creates literal quotes in the file name
+    const sql = `
+      copy into @${QDB}.${QSC}.${QST}/${rel}
+      from ( select '${escapedContent}' as content )
+      file_format = (
+        type = csv
+        field_delimiter = '\\u0001'
+        record_delimiter = 'NONE'
+        skip_header = 0
+        compression = none
+      )
+      overwrite = true
+      single = true;
+    `;
     await runSql(sql);
   }
 
@@ -763,6 +1296,8 @@ export function AdminConfigEditor(props: AdminProps) {
   const [saving, setSaving] = useState<boolean>(false);
   const [loadingFiles, setLoadingFiles] = useState<boolean>(false);
   const [loadingDoc, setLoadingDoc] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   const dirty = useMemo(() => {
     const yamlFromRows = convertRowsToYaml(rows);
@@ -772,12 +1307,14 @@ export function AdminConfigEditor(props: AdminProps) {
   useEffect(() => {
     (async () => {
       setLoadingFiles(true);
+      setError(null);
       try {
         await ensureWholeFileFormat();
         const items = await listStageFiles();
         setFiles(items);
-      } catch (err) {
+      } catch (err: any) {
         console.error(err);
+        setError(err?.message || "Failed to list files.");
         setFiles([]);
       } finally {
         setLoadingFiles(false);
@@ -804,17 +1341,20 @@ export function AdminConfigEditor(props: AdminProps) {
   function convertRowsToYaml(list: RuleRow[]) {
     const dqChecks: Record<string, { enabled: boolean; description: string }> = {};
     list.forEach((row) => {
-      if (!row.ruleName) return;
-      dqChecks[row.ruleName] = {
+      const name = (row.ruleName || "").trim();
+      if (!name) return;
+      dqChecks[name] = {
         enabled: !!row.enabled,
         description: row.description ?? "",
       };
     });
-    return YAML.dump({ dq_checks: dqChecks });
+    return YAML.dump({ dq_checks: dqChecks }, { lineWidth: 120 });
   }
 
   const loadFile = async (filename: string) => {
     setLoadingDoc(true);
+    setError(null);
+    setSuccess(null);
     try {
       const normalized = normalizePath(filename);
       const content = await readStageFileText(normalized);
@@ -822,8 +1362,10 @@ export function AdminConfigEditor(props: AdminProps) {
       setFileContent(content);
       parseYamlToRows(content);
       setViewMode("table");
-    } catch (err) {
+      setSuccess(`Loaded: ${normalized}`);
+    } catch (err: any) {
       console.error(err);
+      setError(err?.message || "Failed to load file.");
     } finally {
       setLoadingDoc(false);
     }
@@ -833,7 +1375,16 @@ export function AdminConfigEditor(props: AdminProps) {
   const save = async () => {
     if (!selectedFile) return;
     setSaving(true);
+    setError(null);
+    setSuccess(null);
     try {
+      // Basic validation: no duplicate rule names
+      const names = rows.map((r) => (r.ruleName || "").trim()).filter(Boolean);
+      const dup = names.find((n, i) => names.indexOf(n) !== i);
+      if (dup) {
+        throw new Error(`Duplicate rule name: ${dup}`);
+      }
+
       const path = normalizePath(selectedFile);
       const toSave = viewMode === "table" ? convertRowsToYaml(rows) : fileContent;
 
@@ -855,15 +1406,22 @@ export function AdminConfigEditor(props: AdminProps) {
       setFileContent(fresh);
       parseYamlToRows(fresh);
       setLoadingDoc(false);
-    } catch (err) {
+
+      // Show unquoted path in banner
+      setSuccess(`Saved to ${HARD_DB}.${HARD_SCHEMA}.${HARD_STAGE}/${path}`);
+    } catch (err: any) {
       console.error(err);
+      setError(err?.message || "Failed to save file.");
     } finally {
       setSaving(false);
     }
   };
 
   const addRow = () =>
-    setRows((prev) => [...prev, { ruleName: `new_rule_${prev.length + 1}`, enabled: false, description: "" }]);
+    setRows((prev) => [
+      ...prev,
+      { ruleName: `new_rule_${prev.length + 1}`, enabled: false, description: "" },
+    ]);
 
   const deleteRow = (index: number) =>
     setRows((prev) => {
@@ -887,25 +1445,7 @@ export function AdminConfigEditor(props: AdminProps) {
           {selectedFile ? `Editing: ${selectedFile}` : "Config Editor"}
         </h2>
         <div className="flex items-center gap-2">
-          {/* Force Reload: re-list stage and re-read current file */}
-          <button
-            onClick={async () => {
-              setLoadingFiles(true);
-              try {
-                const items = await listStageFiles();
-                setFiles(items);
-              } finally {
-                setLoadingFiles(false);
-              }
-              if (selectedFile) {
-                await loadFile(selectedFile);
-              }
-            }}
-            className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300"
-          >
-            Force Reload
-          </button>
-
+          {/* Force Reload removed */}
           <button
             onClick={() => {
               if (viewMode === "table") {
@@ -918,7 +1458,6 @@ export function AdminConfigEditor(props: AdminProps) {
           >
             {viewMode === "yaml" ? "Table View" : "YAML View"}
           </button>
-
           <button
             onClick={save}
             disabled={!selectedFile || saving}
@@ -928,7 +1467,6 @@ export function AdminConfigEditor(props: AdminProps) {
           >
             {saving ? "Saving..." : dirty ? "Save *" : "Save"}
           </button>
-
           <button
             onClick={() => {
               if (dirty && !window.confirm("You have unsaved changes. Close anyway?")) return;
@@ -941,6 +1479,12 @@ export function AdminConfigEditor(props: AdminProps) {
         </div>
       </div>
 
+      {/* Status banners */}
+      <div className="mt-2">
+        {error && <div className="p-2 text-sm text-red-700 bg-red-100 rounded">{error}</div>}
+        {success && <div className="p-2 text-sm text-green-700 bg-green-100 rounded">{success}</div>}
+      </div>
+
       <div className="flex h-[80vh]">
         {/* Sidebar */}
         <div className="w-1/4 max-w-xs bg-gray-50 border-r border-gray-200 p-5 overflow-y-auto rounded-md">
@@ -948,11 +1492,11 @@ export function AdminConfigEditor(props: AdminProps) {
           {loadingFiles && <div className="text-gray-500 text-sm mb-2">Loading...</div>}
           <ul className="space-y-1">
             {(files ?? []).map((file) => (
-              <li key={file}>
+              <li key={file.toLowerCase()}>
                 <button
                   onClick={() => loadFile(file)}
                   className={`block w-full text-left p-2 rounded-md transition-colors duration-150 ${
-                    selectedFile === file
+                    selectedFile?.toLowerCase() === file.toLowerCase()
                       ? "bg-blue-100 text-blue-700 font-medium"
                       : "text-gray-600 hover:bg-gray-200"
                   }`}
@@ -999,7 +1543,7 @@ export function AdminConfigEditor(props: AdminProps) {
                 </thead>
                 <tbody>
                   {rows.map((row, index) => (
-                    <tr key={index}>
+                    <tr key={`${row.ruleName}-${index}`}>
                       <td className="border p-2">
                         <input
                           type="text"
@@ -1036,7 +1580,6 @@ export function AdminConfigEditor(props: AdminProps) {
                   ))}
                 </tbody>
               </table>
-
               <div className="mt-3 flex items-center justify-center">
                 <button
                   onClick={addRow}
