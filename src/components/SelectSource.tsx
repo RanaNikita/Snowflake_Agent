@@ -79,7 +79,7 @@ type MenuItem = { label: string; onClick: () => void };
           }}
           
         />
-      </div>
+      </div> 
 
       {/* PAGE TITLE */}
       <div className="text-center">
