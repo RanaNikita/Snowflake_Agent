@@ -525,7 +525,7 @@ import YAML from "js-yaml";
 /** ===== Types ===== */
 interface RuleRow {
   ruleName: string;
-  enabled: boolean;
+  enabled: boolean; 
   description: string;
 }
 type ViewMode = "table" | "yaml";
