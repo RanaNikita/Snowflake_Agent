@@ -956,8 +956,8 @@ export default function App() {
           element={
             <AdminConfigEditor
               baseUrl={import.meta.env.VITE_SF_BASE_URL}
-              database={import.meta.env.VITE_SF_DATABASE}
-              schema={import.meta.env.VITE_SF_SCHEMA}
+              // database={import.meta.env.VITE_SF_DATABASE}
+              // schema={import.meta.env.VITE_SF_SCHEMA}
               warehouse={import.meta.env.VITE_SF_WAREHOUSE}
               token={import.meta.env.VITE_SF_BEARER_TOKEN}
 
