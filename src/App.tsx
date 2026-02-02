@@ -144,26 +144,7 @@ export default function App() {
     throw lastError!;
   };
 
-  // const createSession = async (): Promise<{userId: string, sessionId: string, appName: string}> => {
-  //   const generatedSessionId = uuidv4();
-  //   const response = await fetch(`/api/apps/app/users/u_999/sessions/${generatedSessionId}`, {
-  //     method: "POST",
-  //     headers: {
-  //       "Content-Type": "application/json"
-  //     }
-  //   });
 
-  //   if (!response.ok) {
-  //     throw new Error(`Failed to create session: ${response.status} ${response.statusText}`);
-  //   }
-
-  //   const data = await response.json();
-  //   return {
-  //     userId: data.userId,
-  //     sessionId: data.id,
-  //     appName: data.appName
-  //   };
-  // };
 
   const [selectedApiUrl, setSelectedApiUrl] = useState("");
   const [workflowType, setWorkflowType] = useState<string>("");
@@ -192,54 +173,6 @@ export default function App() {
   const toggleEyeVisibility = () => {
     setIsEyeVisible((prev) => !prev);
   };
-
-
-
-
-
-
-
-  // const checkBackendHealth = async (): Promise<boolean> => {
-  //   try {
-  //     // Use the docs endpoint or root endpoint to check if backend is ready
-
-
-  //     const headers = {
-  //       Authorization: "Bearer ", // Replace with secure token handling
-  //       "Content-Type": "application/json",
-  //       Accept: "text/event-stream"
-  //     };
-  // const response = await fetch(url, {
-  //   method: "POST",
-  //   headers: headers,
-  //   body: JSON.stringify({
-  //     agent: "SNOWFLAKE_INTELLIGENCE.AGENTS.HIL_SF_IDEA",
-  //     messages: [{
-  //       role: "user",
-  //       content: [{
-  //         type: "text",
-
-  //       }]
-  //     }],
-
-  //     context: {
-  //       warehouse: "MY_WH",
-  //       database: "MY_DB",
-  //       schema: "PUBLIC"
-  //     },
-
-  //     options: {
-  //       allow_execution: true
-  //     }
-
-  //   }),
-  // });
-  // return response.ok;
-  //   } catch (error) {
-  //     console.log("Backend not ready yet:", error);
-  //     return false;
-  //   }
-  // };
 
 
   // Function to extract text and metadata from SSE data
@@ -683,9 +616,6 @@ export default function App() {
         const AGENT = 'HIL_SF_IDEA';
         const url = `https://${HOST}/api/v2/databases/${DATABASE}/schemas/${SCHEMA}/agents/${AGENT}:run`;
 
-
-
-
         let finalApiUrl = selectedApiUrl;
 
         // Check if URL already contains ":run"
@@ -1095,8 +1025,4 @@ export default function App() {
       </Routes>
     </div>
   );
-
-
-
-
 }
